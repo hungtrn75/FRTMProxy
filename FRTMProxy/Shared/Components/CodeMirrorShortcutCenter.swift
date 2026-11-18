@@ -22,6 +22,12 @@ final class CodeMirrorShortcutCenter {
     }
 
     func focusSearchInActiveEditor() {
+        if let textView = NSApp.keyWindow?.firstResponder as? NativeBodyTextContentView {
+            let item = NSMenuItem()
+            item.tag = NSTextFinder.Action.showFindInterface.rawValue
+            textView.performFindPanelAction(item)
+            return
+        }
         guard let editor = preferredEditor() else { return }
         let key = ObjectIdentifier(editor)
         editor.toggleFilterBar()

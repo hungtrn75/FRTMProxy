@@ -261,3 +261,42 @@ final class CodeMirrorContainerView: NSView {
         return nil
     }
 }
+
+/// Native, selectable body preview with the standard macOS find bar.
+struct NativeBodyTextView: NSViewRepresentable {
+    let text: String
+    let colors: DesignSystem.ColorPalette
+
+    func makeNSView(context: Context) -> NSScrollView {
+        let scroll = NSScrollView()
+        scroll.hasVerticalScroller = true
+        scroll.hasHorizontalScroller = false
+        scroll.autohidesScrollers = true
+        scroll.drawsBackground = false
+        let view = NativeBodyTextContentView(usingTextLayoutManager: true)
+        view.isEditable = false
+        view.isSelectable = true
+        view.isRichText = false
+        view.usesFindBar = true
+        view.isVerticallyResizable = true
+        view.isHorizontallyResizable = false
+        view.autoresizingMask = [.width]
+        view.textContainer?.widthTracksTextView = true
+        view.drawsBackground = false
+        view.font = .monospacedSystemFont(ofSize: DesignSystem.Metrics.font(13), weight: .regular)
+        scroll.documentView = view
+        return scroll
+    }
+
+    func updateNSView(_ scroll: NSScrollView, context: Context) {
+        guard let view = scroll.documentView as? NSTextView else { return }
+        view.textColor = NSColor(colors.textPrimary)
+        view.font = .monospacedSystemFont(ofSize: DesignSystem.Metrics.font(13), weight: .regular)
+        if view.string != text {
+            view.string = text
+            view.scrollToBeginningOfDocument(nil)
+        }
+    }
+}
+
+final class NativeBodyTextContentView: NSTextView {}

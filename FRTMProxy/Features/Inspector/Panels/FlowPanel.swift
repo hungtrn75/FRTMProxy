@@ -385,11 +385,7 @@ private struct BodyInspector: View {
                             .frame(maxWidth: .infinity, minHeight: imagePreviewHeight, maxHeight: imagePreviewHeight, alignment: .center)
                             .padding(DesignSystem.Spacing.sm)
                     } else {
-                        CodeEditorView(
-                            text: $renderedText,
-                            isEditable: false,
-                            colors: colors
-                        )
+                        NativeBodyTextView(text: renderedText, colors: colors)
                         .frame(minHeight: 0, maxHeight: .infinity, alignment: .top)
                         .padding(DesignSystem.Spacing.sm)
                     }
