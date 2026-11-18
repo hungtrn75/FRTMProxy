@@ -18,7 +18,23 @@ struct FlowContextMenuContent: View {
     let onFilterDevice: () -> Void
 
     var body: some View {
-        Menu {
+        Button {
+            ClipboardHelper.copy(flow.request?.url)
+        } label: {
+            Label("Copy URL", systemImage: "link")
+        }
+        .disabled(flow.request?.url == nil)
+
+        Button {
+            ClipboardHelper.copy(flow.curlString)
+        } label: {
+            Label("Copy cURL", systemImage: "terminal")
+        }
+        .disabled(flow.request == nil)
+
+        Divider()
+
+        Section {
             if let member = CaptureProfileMember.request(for: flow) {
                 profileMemberMenu("This Call", scope: "request", member: member)
             }
@@ -28,12 +44,12 @@ struct FlowContextMenuContent: View {
             if let app = flow.clientApp, !FlowClientApp.normalizedID(app.id).isEmpty {
                 profileMemberMenu("This App", scope: "app", member: .app(app.id))
             }
-        } label: {
+        } header: {
             Label("Profiles", systemImage: "person.crop.rectangle.stack")
         }
         .disabled(!profileStore.canEdit)
 
-        Menu {
+        Section {
             Button(action: onEditRetry) {
                 Label("Edit & Retry", systemImage: "arrow.triangle.2.circlepath")
             }
@@ -41,65 +57,47 @@ struct FlowContextMenuContent: View {
             Button(action: onMapLocal) {
                 Label("Map Local", systemImage: "pencil.and.outline")
             }
-        } label: {
+        } header: {
             Label("Actions", systemImage: "bolt")
         }
 
-        Menu {
-            Button {
-                ClipboardHelper.copy(flow.request?.url)
-            } label: {
-                Label("URL", systemImage: "link")
-            }
-            .disabled(flow.request?.url == nil)
-
-            Button {
-                ClipboardHelper.copy(flow.curlString)
-            } label: {
-                Label("cURL", systemImage: "terminal")
-            }
-            .disabled(flow.curlString == nil)
-        } label: {
-            Label("Copy", systemImage: "doc.on.doc")
-        }
-
-        Menu {
+        Section {
             Button {
                 openTeamsWithCopiedDetails()
             } label: {
                 Label("Open Teams (copied)", systemImage: "message")
             }
-            .disabled(flow.teamsShareText == nil)
+            .disabled(flow.request == nil)
 
             if flow.xRequestID != nil {
                 Button {
                     presentRequestIDShare()
                 } label: {
-                    Label("X-Request-ID…", systemImage: "number")
+                    Label("Share X-Request-ID…", systemImage: "number")
                 }
             }
 
             Button {
                 presentDetailsShare()
             } label: {
-                Label("Details…", systemImage: "square.and.arrow.up")
+                Label("Share Details…", systemImage: "square.and.arrow.up")
             }
-            .disabled(flow.teamsShareText == nil )
+            .disabled(flow.request == nil)
 
             Button {
                 presentURLShare()
             } label: {
-                Label("URL…", systemImage: "link")
+                Label("Share URL…", systemImage: "link")
             }
             .disabled(flow.request?.url == nil)
 
             Button {
                 presentCurlShare()
             } label: {
-                Label("cURL…", systemImage: "terminal")
+                Label("Share cURL…", systemImage: "terminal")
             }
-            .disabled(flow.curlString == nil)
-        } label: {
+            .disabled(flow.request == nil)
+        } header: {
             Label("Share", systemImage: "square.and.arrow.up")
         }
 
@@ -108,25 +106,25 @@ struct FlowContextMenuContent: View {
         }
 
         if shouldShowFilters {
-            Menu {
+            Section {
                 if flow.clientApp != nil {
                     Button(action: onFilterApp) {
-                        Label("App", systemImage: "line.3.horizontal.decrease.circle")
+                        Label("Filter by App", systemImage: "line.3.horizontal.decrease.circle")
                     }
                 }
 
                 if !flow.clientIP.isEmpty {
                     Button(action: onFilterDevice) {
-                        Label("Device", systemImage: "line.3.horizontal.decrease.circle")
+                        Label("Filter by Device", systemImage: "line.3.horizontal.decrease.circle")
                     }
                 }
-            } label: {
+            } header: {
                 Label("Filter", systemImage: "line.3.horizontal.decrease.circle")
             }
         }
 
         if shouldShowPins {
-            Menu {
+            Section {
                 if flow.clientApp != nil {
                     if isAppPinned {
                         Button(action: onUnpinApp) {
@@ -150,27 +148,27 @@ struct FlowContextMenuContent: View {
                         }
                     }
                 }
-            } label: {
+            } header: {
                 Label("Pin", systemImage: "pin")
             }
         }
 
         Divider()
 
-        Menu {
+        Section {
             Button {
                 let titles = SharePresenter.availableServiceTitles(for: [flow.request?.url ?? "", flow.teamsShareText ?? ""])
                 ClipboardHelper.copy(titles.joined(separator: "\n"))
             } label: {
                 Label("Copy share targets", systemImage: "list.bullet")
             }
-        } label: {
+        } header: {
             Label("Debug", systemImage: "ladybug")
         }
     }
 
     private func profileMemberMenu(_ title: LocalizedStringKey, scope: String, member: CaptureProfileMember) -> some View {
-        Menu {
+        Section {
             Button("Create Profile…", systemImage: "plus") { profileActions?.create(member) }
                 .accessibilityIdentifier("capture.profile.create.\(scope)")
             if !profileStore.profiles.isEmpty {
@@ -181,7 +179,7 @@ struct FlowContextMenuContent: View {
                         .accessibilityIdentifier("capture.profile.add.\(scope).\(profile.name)")
                 }
             }
-        } label: { Text(title) }
+        } header: { Text(title) }
     }
 
     private var shouldShowFilters: Bool {
