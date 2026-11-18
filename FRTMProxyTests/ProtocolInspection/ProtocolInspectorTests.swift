@@ -4,6 +4,37 @@ import Testing
 
 @Suite("ProtocolInspector")
 struct ProtocolInspectorTests {
+    @Test("Body preparation runs off the UI actor and preserves large JSON content")
+    func backgroundBodyPreparation() async throws {
+        let objects = (0..<2000).map { ["index": $0, "value": $0 * 2] }
+        let data = try JSONSerialization.data(withJSONObject: objects)
+        let source = String(decoding: data, as: UTF8.self)
+        var prepared = await Task.detached {
+            BodyRenderCache(source: source, headers: ["Content-Type": "application/json"])
+        }.value
+        #expect(prepared.inspection?.kind == .json)
+        #expect(prepared.prettyPrinted != nil)
+        let first = prepared.pretty()
+        #expect(prepared.pretty() == first)
+        let decoded = try JSONSerialization.jsonObject(with: Data(first.utf8)) as? [[String: Int]]
+        #expect(decoded == objects)
+        #expect(prepared.source == source)
+    }
+
+    @Test("Body preparation invalidates protocol and image information when headers change")
+    func bodyPreparationHeaders() {
+        let source = "data: hello\n\n"
+        let text = BodyRenderCache(source: source, headers: ["Content-Type": "text/plain"])
+        let events = BodyRenderCache(source: source, headers: ["Content-Type": "text/event-stream"])
+        #expect(text.inspection?.kind == .text)
+        #expect(events.inspection?.kind == .serverSentEvents)
+        #expect(events.inspection?.sections.first?.content.contains("hello") == true)
+        #expect(events.imageData == nil)
+        let image = BodyRenderCache(source: "aGVsbG8=", headers: ["Content-Type": "image/png"])
+        #expect(image.imageData == Data("hello".utf8))
+        #expect(BodyRenderCache(source: nil).inspection == nil)
+    }
+
     @Test func modernProtocolFixturesAndFalsePositiveBoundary() {
         #expect(ProtocolInspector.inspect(body: "{\"index\":1}\n{\"index\":2}\n", headers: ["Content-Type": "application/x-ndjson"])?.kind == .ndjson)
         #expect(ProtocolInspector.inspect(body: #"[{"jsonrpc":"2.0","id":1,"method":"eth_chainId"},{"jsonrpc":"2.0","id":2,"method":"eth_call"}]"#, headers: [:])?.kind == .jsonRPC)

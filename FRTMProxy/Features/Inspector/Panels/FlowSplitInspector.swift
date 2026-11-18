@@ -57,7 +57,6 @@ struct FlowSplitInspector: View {
                     phase: "request",
                     headerFields: flow.request?.headerFields
                 )
-                .id("\(flow.id)-request")
                 .frame(maxWidth: .infinity)
 
                 FlowPanel(
@@ -82,7 +81,6 @@ struct FlowSplitInspector: View {
                     phase: "response",
                     headerFields: flow.response?.headerFields
                 )
-                .id("\(flow.id)-response")
                 .frame(maxWidth: .infinity)
             }
         }

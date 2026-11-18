@@ -246,6 +246,7 @@ struct FlowTableView: View {
             },
             onFilterDevice: { onFilterDevice(flow.clientIP) }
         )
+        .equatable()
     }
 
     private func toggleSort(_ column: FlowColumn) {
@@ -449,7 +450,8 @@ private struct FlowTableHeader: View {
     }
 }
 
-private struct FlowTableRow: View {
+private struct FlowTableRow: View, Equatable {
+    let layoutScale = DesignSystem.Metrics.scale
     let flow: MitmFlow
     let visibleColumns: [FlowColumn]
     let headerColumns: [FlowHeaderColumn]
@@ -468,6 +470,14 @@ private struct FlowTableRow: View {
     let onUnpinApp: () -> Void
     let onFilterApp: () -> Void
     let onFilterDevice: () -> Void
+
+    // Compare all action inputs too: a reused row must never act on an old flow.
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.flow == rhs.flow && lhs.layoutScale == rhs.layoutScale && lhs.visibleColumns == rhs.visibleColumns
+            && lhs.headerColumns == rhs.headerColumns && lhs.colors == rhs.colors
+            && lhs.isSelected == rhs.isSelected && lhs.isCompareSelected == rhs.isCompareSelected
+            && lhs.isHostPinned == rhs.isHostPinned && lhs.isAppPinned == rhs.isAppPinned
+    }
 
     @State private var isHovering = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion

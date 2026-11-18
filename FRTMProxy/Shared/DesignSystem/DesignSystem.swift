@@ -98,7 +98,7 @@ enum DesignSystem {
         }
     }
 
-    struct ColorPalette {
+    struct ColorPalette: Equatable {
         let background: Color
         let surface: Color
         let surfaceElevated: Color

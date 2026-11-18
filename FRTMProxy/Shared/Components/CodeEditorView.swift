@@ -24,7 +24,7 @@ struct CodeEditorView: NSViewRepresentable {
     }
 
     func updateNSView(_ nsView: CodeMirrorContainerView, context: Context) {
-        nsView.minHeight = minHeight
+        if nsView.minHeight != minHeight { nsView.minHeight = minHeight }
         context.coordinator.parent = self
         context.coordinator.attach(webView: nsView.webView)
         
@@ -173,6 +173,12 @@ final class Coordinator: NSObject, CodeMirrorWebViewDelegate {
     }
 
     func codeMirrorViewDidChangeContent(_ sender: CodeMirrorWebView, content: String) {
+        // Read-only previews never write JavaScript callbacks back into SwiftUI state.
+        // A delayed callback may belong to the previously selected request.
+        guard parent.isEditable else {
+            isSyncingFromParent = false
+            return
+        }
         if isSyncingFromParent {
             isSyncingFromParent = false
             return

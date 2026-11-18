@@ -123,6 +123,7 @@ struct FlowPanel: View {
             }
         }
         .onChange(of: hasWebSocketMessages) { _, hasMessages in
+            if !hasMessages, detailTab == .messages { detailTab = .body }
             if hasMessages, detailTab == .body {
                 detailTab = .messages
             }
@@ -332,17 +333,17 @@ private struct BodyInspector: View {
         contentType.lowercased().contains("application/grpc")
     }
 
-    private var isGraphQL: Bool {
-        guard let raw = payload, !raw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-              let data = raw.data(using: .utf8),
-              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
-        else { return false }
-        return json["query"] != nil || json["mutation"] != nil || json["subscription"] != nil
+    private var isGraphQL: Bool { cache.inspection?.kind == .graphQL }
+
+    private var structuredInspection: ProtocolInspectionResult? { cache.inspection }
+
+    private struct RenderInput: Equatable {
+        let payload: String?
+        let headers: [String: String]
+        let mode: BodyMode
     }
 
-    private var structuredInspection: ProtocolInspectionResult? {
-        ProtocolInspector.inspect(body: payload, headers: headers)
-    }
+    @State private var isRendering = false
 
     private var hasDedicatedStructuredInspection: Bool {
         guard let kind = structuredInspection?.kind else { return false }
@@ -403,75 +404,90 @@ private struct BodyInspector: View {
                 )
             }
         }
-        .onAppear(perform: refreshIfNeeded)
-        .onChange(of: payload ?? "") { _, _ in
-            // Reset cache when switching flow to avoid stale content.
-            cache = BodyRenderCache(source: nil)
-            refreshIfNeeded()
+        .overlay {
+            if isRendering {
+                colors.surface.opacity(0.95)
+                ProgressView()
+            }
         }
-        .onChange(of: mode) { _, _ in
-            refreshIfNeeded()
+        .allowsHitTesting(!isRendering)
+        .task(id: RenderInput(payload: payload, headers: headers, mode: mode)) {
+            await refreshIfNeeded()
         }
     }
 
-    private func refreshIfNeeded() {
-        let raw = (payload ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+    @MainActor
+    private func refreshIfNeeded() async {
+        isRendering = true
+        defer { if !Task.isCancelled { isRendering = false } }
+        let source = payload
+        let sourceHeaders = headers
+        let previous = cache
+        let preparation = Task.detached(priority: .userInitiated) {
+            guard !Task.isCancelled else { return previous }
+            let raw = (source ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            if previous.source == raw && previous.headers == sourceHeaders { return previous }
+            return BodyRenderCache(source: raw, headers: sourceHeaders)
+        }
+        let prepared = await withTaskCancellationHandler {
+            await preparation.value
+        } onCancel: {
+            preparation.cancel()
+        }
+        guard !Task.isCancelled else { return }
 
+        if cache.source != prepared.source || cache.headers != prepared.headers {
+            renderedImage = prepared.imageData.flatMap { NSImage(data: $0) }
+        }
+        cache = prepared
+        let raw = prepared.source ?? ""
         guard !raw.isEmpty || structuredInspection != nil else {
             renderedText = ""
             renderedImage = nil
             return
         }
 
-        renderedImage = BodyImageDecoder.decode(from: raw, contentType: contentType)
-
-        if cache.source != raw {
-            cache = BodyRenderCache(source: raw)
+        var effectiveMode = mode
+        if renderedImage != nil, effectiveMode == .pretty { effectiveMode = .image }
+        if renderedImage == nil, effectiveMode == .image { effectiveMode = .pretty }
+        if !availableModes.contains(effectiveMode) { effectiveMode = .pretty }
+        if effectiveMode == .pretty {
+            if isGraphQL { effectiveMode = .graphql }
+            else if isGRPC { effectiveMode = .grpc }
+            else if hasDedicatedStructuredInspection { effectiveMode = .structured }
         }
-
-        if renderedImage != nil, mode == .pretty {
-            mode = .image
+        let selectedMode = effectiveMode
+        let contentTypeHint = contentType
+        let formatting = Task.detached(priority: .userInitiated) {
+            guard !Task.isCancelled else { return (prepared, "") }
+            var result = prepared
+            let text: String
+            switch selectedMode {
+            case .raw, .image: text = raw
+            case .pretty: text = result.pretty()
+            case .hex: text = result.hex(contentTypeHint: contentTypeHint)
+            case .graphql: text = result.graphql()
+            case .grpc: text = result.grpc()
+            case .structured:
+                let inspection = result.inspection
+                var blocks: [String] = []
+                if let summary = inspection?.summary, !summary.isEmpty { blocks.append("# \(summary)") }
+                blocks.append(contentsOf: inspection?.sections.map { "## \($0.title)\n\($0.content)" } ?? [])
+                text = blocks.joined(separator: "\n\n")
+            }
+            return (result, text)
         }
-        if renderedImage == nil, mode == .image {
-            mode = .pretty
+        let (result, text) = await withTaskCancellationHandler {
+            await formatting.value
+        } onCancel: {
+            formatting.cancel()
         }
-        if isGraphQL, mode == .pretty {
-            mode = .graphql
-        }
-        if isGRPC, mode == .pretty {
-            mode = .grpc
-        }
-        if hasDedicatedStructuredInspection, mode == .pretty {
-            mode = .structured
-        }
-
-        switch mode {
-        case .raw:
-            renderedText = raw
-        case .pretty:
-            renderedText = cache.prettyPrinted ?? cache.pretty()
-        case .hex:
-            renderedText = cache.hexDump ?? cache.hex(contentTypeHint: contentType)
-        case .image:
-            renderedText = raw
-        case .graphql:
-            renderedText = cache.graphqlText ?? cache.graphql()
-        case .grpc:
-            renderedText = cache.grpcText ?? cache.grpc()
-        case .structured:
-            renderedText = renderStructuredInspection()
-        }
+        guard !Task.isCancelled else { return }
+        cache = result
+        renderedText = text
+        if mode != effectiveMode { mode = effectiveMode }
     }
 
-    private func renderStructuredInspection() -> String {
-        guard let inspection = structuredInspection else { return payload ?? "" }
-        var blocks: [String] = []
-        if let summary = inspection.summary, !summary.isEmpty {
-            blocks.append("# \(summary)")
-        }
-        blocks.append(contentsOf: inspection.sections.map { "## \($0.title)\n\($0.content)" })
-        return blocks.joined(separator: "\n\n")
-    }
 }
 
 private struct BodyModePicker: View {
@@ -505,15 +521,24 @@ private struct BodyModePicker: View {
     }
 }
 
-private struct BodyRenderCache {
+struct BodyRenderCache: Sendable {
     let source: String?
+    let headers: [String: String]
+    let inspection: ProtocolInspectionResult?
+    let imageData: Data?
     private(set) var prettyPrinted: String?
     private(set) var hexDump: String?
     private(set) var graphqlText: String?
     private(set) var grpcText: String?
 
-    init(source: String?) {
+    init(source: String?, headers: [String: String] = [:]) {
         self.source = source
+        self.headers = headers
+        inspection = source == nil && headers.isEmpty ? nil : ProtocolInspector.inspect(body: source, headers: headers)
+        let contentType = headers.first { $0.key.caseInsensitiveCompare("content-type") == .orderedSame }?.value ?? ""
+        imageData = BodyImageDecoder.decodeData(from: source, contentType: contentType)
+        // Protocol inspection already formats ordinary JSON; share that result.
+        if inspection?.kind == .json { prettyPrinted = inspection?.sections.first?.content }
     }
 
     mutating func pretty() -> String {
@@ -830,7 +855,7 @@ private struct WebSocketMessageRow: View {
 
 // MARK: - Body Modes
 
-private enum BodyMode: CaseIterable {
+private enum BodyMode: CaseIterable, Sendable {
     case image, raw, pretty, hex, graphql, grpc, structured
 
     var label: String {

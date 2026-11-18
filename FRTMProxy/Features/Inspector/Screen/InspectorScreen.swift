@@ -127,6 +127,7 @@ struct InspectorScreen: View {
                                     viewModel.setBreakpoint(for: flow, phase: phase, enabled: enabled)
                                 }
                             )
+                            .equatable()
                             .onboardingTarget(.inspectFlow)
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
                             .frame(minHeight: inspectorPanelMinHeight, idealHeight: inspectorPanelIdealHeight)

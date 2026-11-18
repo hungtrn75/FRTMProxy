@@ -1,6 +1,6 @@
 import SwiftUI
 
-struct FlowInspectorPanel: View {
+struct FlowInspectorPanel: View, Equatable {
     let flow: MitmFlow
     let colors: DesignSystem.ColorPalette
     let onMapLocal: () -> Void
@@ -10,6 +10,13 @@ struct FlowInspectorPanel: View {
     let isRequestBreakpointEnabled: Bool
     let isResponseBreakpointEnabled: Bool
     let onToggleBreakpoint: ((FlowBreakpointPhase, Bool) -> Void)?
+    let layoutScale = DesignSystem.Metrics.scale
+
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.flow == rhs.flow && lhs.colors == rhs.colors && lhs.layoutScale == rhs.layoutScale
+            && lhs.isRequestBreakpointEnabled == rhs.isRequestBreakpointEnabled
+            && lhs.isResponseBreakpointEnabled == rhs.isResponseBreakpointEnabled
+    }
 
     var body: some View {
         GeometryReader { geometry in
