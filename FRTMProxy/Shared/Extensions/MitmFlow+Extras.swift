@@ -173,21 +173,26 @@ extension MitmFlow {
     
     var curlString: String? {
         guard let req = request else { return nil }
-        var components: [String] = ["curl", "-X", req.method]
-        components.append("\"\(req.url)\"")
+        var components: [String] = ["curl", "--compressed", "-X", Self.shellQuoted(req.method)]
+        components.append(Self.shellQuoted(req.url))
         
         for (key, value) in req.headers {
+            // Let curl advertise only the encodings it can decode on this machine.
+            guard key.caseInsensitiveCompare("accept-encoding") != .orderedSame else { continue }
             components.append("-H")
-            components.append("\"\(key): \(value)\"")
+            components.append(Self.shellQuoted("\(key): \(value)"))
         }
         
         if let body = req.body, !body.isEmpty {
-            let escaped = body.replacingOccurrences(of: "\"", with: "\\\"")
             components.append("--data-binary")
-            components.append("\"\(escaped)\"")
+            components.append(Self.shellQuoted(body))
         }
         
         return components.joined(separator: " ")
+    }
+
+    private static func shellQuoted(_ value: String) -> String {
+        "'" + value.replacingOccurrences(of: "'", with: "'\"'\"'") + "'"
     }
     
     var breakpointPhase: FlowBreakpointPhase? {

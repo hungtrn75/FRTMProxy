@@ -5,6 +5,37 @@ import Foundation
 @Suite("Normalizzazioni dei modelli")
 struct ModelNormalizationTests {
 
+    @Test("Copied cURL negotiates compression and preserves shell arguments")
+    func curlShellArguments() throws {
+        let url = "https://example.com/cards?name=O'Brien&value=$HOME"
+        let header = "literal $HOME `whoami` \"quoted\" \\ O'Brien"
+        let body = "{\"text\":\"$HOME `whoami` O'Brien\"}\nsecond line"
+        var flow = MitmFlow(id: "curl-test", event: "request")
+        flow.request = MitmFlow.Request(
+            method: "POST", url: url,
+            headers: ["Accept-Encoding": "gzip, deflate, br", "X-Test": header],
+            body: body
+        )
+        let command = try #require(flow.curlString)
+        let process = Process()
+        let output = Pipe()
+        process.executableURL = URL(fileURLWithPath: "/bin/zsh")
+        // Replace curl with an argument recorder; no network request is made.
+        process.arguments = ["-f", "-c", "curl() { printf '%s\\0' \"$@\"; }; " + command]
+        process.standardOutput = output
+        try process.run()
+        let data = output.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        #expect(process.terminationStatus == 0)
+        let arguments = String(decoding: data, as: UTF8.self).split(separator: "\0").map(String.init)
+        #expect(arguments == ["--compressed", "-X", "POST", url, "-H", "X-Test: " + header, "--data-binary", body])
+    }
+
+    @Test("Copied cURL is unavailable without a request")
+    func curlWithoutRequest() {
+        #expect(MitmFlow(id: "empty", event: "response").curlString == nil)
+    }
+
     // MARK: PinnedHost
 
     @Test("PinnedHost.normalized trimma e abbassa il case")
