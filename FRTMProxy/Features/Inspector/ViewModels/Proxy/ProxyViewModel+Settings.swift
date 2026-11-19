@@ -232,6 +232,8 @@ extension ProxyViewModel {
     private func stopProxyNetworkPathMonitor() {
         networkPathMonitor?.cancel()
         networkPathMonitor = nil
+        proxyNetworkRefreshTask?.cancel()
+        proxyNetworkRefreshTask = nil
     }
 
     private func startWakeObserverIfNeeded() {
@@ -256,10 +258,20 @@ extension ProxyViewModel {
 
     private func reassertMacOSProxyOverrideIfNeeded(reason: String) {
         guard overrideMacOSProxy, isRunning else { return }
-        let now = Date()
-        guard now.timeIntervalSince(lastProxyReassertAt) >= 8 else { return }
-        lastProxyReassertAt = now
-        applyMacOSProxyOverride(port: activePort)
-        appendLog("\n[PROXY] Re-applied macOS proxy override (\(reason)).")
+        proxyNetworkRefreshTask?.cancel()
+        proxyNetworkRefreshTask = Task { @MainActor [weak self] in
+            for delay in [1, 3] {
+                do { try await Task.sleep(for: .seconds(delay)) } catch { return }
+                guard let self, self.overrideMacOSProxy, self.isRunning else { return }
+                do {
+                    try await MacOSProxyOverrideManager.shared.enableProxy(host: "localhost", port: self.activePort)
+                    guard !Task.isCancelled, self.overrideMacOSProxy, self.isRunning else { return }
+                    if delay == 3 { self.appendLog("\n[PROXY] Checked macOS proxy override (\(reason)).") }
+                } catch {
+                    guard !Task.isCancelled else { return }
+                    if delay == 3 { self.appendLog("\n[SYSTEM] \(error.localizedDescription)") }
+                }
+            }
+        }
     }
 }

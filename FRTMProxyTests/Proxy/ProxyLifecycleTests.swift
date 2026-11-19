@@ -23,6 +23,27 @@ struct ProxyLifecycleTests {
         #expect(!MacOSProxyOverrideManager.owns(.init(enabled: false, host: "localhost", port: 8080), override: owned))
     }
 
+    @Test func newNetworkServiceIsConfiguredAndRestoredWithoutRewritingExistingService() async throws {
+        let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        let suite = "ProxyNetworkChange.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer {
+            defaults.removePersistentDomain(forName: suite)
+            try? FileManager.default.removeItem(at: directory)
+        }
+        let fixture = NetworkChangeFixture()
+        let manager = MacOSProxyOverrideManager(defaults: defaults, journalURL: directory.appending(path: "proxy.json"), commandRunner: { try fixture.run($0) })
+        try await manager.enableProxy(host: "localhost", port: 8080)
+        let initialWrites = fixture.writes(for: "Wi-Fi")
+        fixture.addEthernet()
+        try await manager.enableProxy(host: "localhost", port: 8080)
+        #expect(fixture.writes(for: "Wi-Fi") == initialWrites)
+        #expect(fixture.setting(service: "Ethernet", secure: false).host == "localhost")
+        try await manager.disableProxy()
+        #expect(fixture.setting(service: "Ethernet", secure: false).host == "ethernet.example")
+        #expect(!fixture.setting(service: "Ethernet", secure: false).enabled)
+    }
+
     @Test func rollbackAndExternalChangesWithoutTouchingRealNetworkSettings() async throws {
         let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
         let journal = directory.appending(path: "proxy.json")
@@ -57,6 +78,50 @@ struct ProxyLifecycleTests {
         try await manager.disableProxy()
         #expect(!fixture.http.enabled)
         #expect(fixture.https.host == "corporate.example")
+    }
+}
+
+private final class NetworkChangeFixture: @unchecked Sendable {
+    private let lock = NSLock()
+    private var services = ["Wi-Fi"]
+    private var values: [String: [Bool: MacOSProxySnapshot.ProxySettings]] = [
+        "Wi-Fi": [false: .init(enabled: false, host: "wifi.example", port: 80), true: .init(enabled: false, host: "wifi.example", port: 80)]
+    ]
+    private var writeCounts: [String: Int] = [:]
+
+    func addEthernet() {
+        lock.lock(); defer { lock.unlock() }
+        services.append("Ethernet")
+        values["Ethernet"] = [false: .init(enabled: false, host: "ethernet.example", port: 81), true: .init(enabled: false, host: "ethernet.example", port: 81)]
+    }
+
+    func writes(for service: String) -> Int {
+        lock.lock(); defer { lock.unlock() }
+        return writeCounts[service, default: 0]
+    }
+
+    func setting(service: String, secure: Bool) -> MacOSProxySnapshot.ProxySettings {
+        lock.lock(); defer { lock.unlock() }
+        return values[service]?[secure] ?? .init(enabled: false, host: nil, port: nil)
+    }
+
+    func run(_ arguments: [String]) throws -> String {
+        lock.lock(); defer { lock.unlock() }
+        guard let command = arguments.first else { throw CocoaError(.fileReadCorruptFile) }
+        if command == "-listallnetworkservices" { return "An asterisk denotes a disabled network service.\n" + services.joined(separator: "\n") }
+        let service = arguments[1]
+        let secure = command.contains("secure")
+        guard let current = values[service]?[secure] else { throw CocoaError(.fileReadCorruptFile) }
+        if command.hasPrefix("-get") {
+            return "Enabled: \(current.enabled ? "Yes" : "No")\nServer: \(current.host ?? "")\nPort: \(current.port ?? 0)\n"
+        }
+        writeCounts[service, default: 0] += 1
+        if command.hasSuffix("state") {
+            values[service]?[secure] = .init(enabled: arguments[2] == "on", host: current.host, port: current.port)
+        } else {
+            values[service]?[secure] = .init(enabled: current.enabled, host: arguments[2], port: Int(arguments[3]))
+        }
+        return ""
     }
 }
 

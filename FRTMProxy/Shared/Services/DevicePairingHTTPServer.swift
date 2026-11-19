@@ -85,7 +85,11 @@ final class DevicePairingHTTPServer {
             }
 
             listener.newConnectionHandler = { [weak self] connection in
-                self?.handle(connection: connection, ipAddress: ipAddress)
+                guard let self, let currentAddress = LocalNetworkInfo.primaryIPv4Address() else {
+                    connection.cancel()
+                    return
+                }
+                self.handle(connection: connection, ipAddress: currentAddress)
             }
 
             listener.start(queue: queue)

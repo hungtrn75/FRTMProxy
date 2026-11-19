@@ -15,12 +15,16 @@ final class DeviceConnectViewModel: ObservableObject {
     private var proxyPort: Int = 8080
     private var rootCADER: Data?
     private var refreshTask: Task<Void, Never>?
+    private var listenerPort: Int?
+    private var lastNetworkAddress: String?
 
     init() {
         server.onStarted = { [weak self] info in
             Task { @MainActor in
                 self?.isRunning = true
                 self?.connectionURL = info.landingURL
+                self?.listenerPort = info.landingURL.port
+                self?.lastNetworkAddress = info.ipAddress
                 self?.ipAddress = info.ipAddress
                 self?.detectedWiFiSSID = (info.wifiSSID ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
                 self?.pushConfigToServer()
@@ -50,6 +54,7 @@ final class DeviceConnectViewModel: ObservableObject {
             refreshWiFiSSID()
             pushConfigToServer()
             errorMessage = nil
+            lastNetworkAddress = LocalNetworkInfo.primaryIPv4Address()
             server.start()
             startRefreshingSSID()
         } catch {
@@ -62,6 +67,8 @@ final class DeviceConnectViewModel: ObservableObject {
         stopRefreshingSSID()
         isRunning = false
         connectionURL = nil
+        listenerPort = nil
+        lastNetworkAddress = nil
     }
 
     func copyConnectionURLToClipboard() {
@@ -102,9 +109,23 @@ final class DeviceConnectViewModel: ObservableObject {
                 await MainActor.run {
                     self?.refreshWiFiSSID()
                     self?.pushConfigToServer()
+                    self?.refreshNetworkAddress()
                 }
                 try? await Task.sleep(for: .seconds(2))
             }
+        }
+    }
+
+    private func refreshNetworkAddress() {
+        let address = LocalNetworkInfo.primaryIPv4Address()
+        guard address != lastNetworkAddress else { return }
+        lastNetworkAddress = address
+        ipAddress = address ?? "—"
+        if let address, let port = listenerPort {
+            connectionURL = URL(string: "http://\(address):\(port)/")
+        } else {
+            connectionURL = nil
+            if address != nil && !isRunning { server.start() }
         }
     }
 
@@ -312,7 +333,7 @@ struct DeviceConnectView: View {
                 )
             }
 
-            Text("Profiles are tied to the current SSID. If you switch network, restart the server to regenerate the QR code.")
+            Text("The QR code updates when the network changes. Profiles already installed on a device may need to be installed again for the new network.")
                 .font(DesignSystem.Fonts.caption)
                 .foregroundStyle(colors.textSecondary)
 

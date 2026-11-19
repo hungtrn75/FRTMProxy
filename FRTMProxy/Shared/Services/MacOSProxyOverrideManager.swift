@@ -59,10 +59,12 @@ actor MacOSProxyOverrideManager {
             throw MacOSProxyOverrideError.ownershipChanged("another running FRTMProxy instance")
         }
         let target = MacOSProxySnapshot.ProxySettings(enabled: true, host: host, port: port)
+        var servicesToApply: [String] = []
         for service in services {
             let current = try readServiceSettings(service)
             if snapshot.services[service] == nil {
                 snapshot.services[service] = current
+                servicesToApply.append(service)
             } else if let owned = snapshot.override {
                 guard current.http == owned && current.https == owned else {
                     throw MacOSProxyOverrideError.ownershipChanged(service)
@@ -87,7 +89,7 @@ actor MacOSProxyOverrideManager {
         snapshot.ownerProcessID = ProcessInfo.processInfo.processIdentifier
         try persistSnapshot(snapshot)
         do {
-            for service in services {
+            for service in servicesToApply {
                 try applyProxySettings(target, service: service, secure: false)
                 try applyProxySettings(target, service: service, secure: true)
             }

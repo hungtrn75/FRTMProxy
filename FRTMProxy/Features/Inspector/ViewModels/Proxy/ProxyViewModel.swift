@@ -73,7 +73,7 @@ final class ProxyViewModel: ObservableObject {
     var networkPathMonitor: NWPathMonitor?
     let networkPathMonitorQueue = DispatchQueue(label: "com.frtmproxy.network-path-monitor", qos: .utility)
     var wakeObserver: NSObjectProtocol?
-    var lastProxyReassertAt: Date = .distantPast
+    var proxyNetworkRefreshTask: Task<Void, Never>?
     var onToast: ((String, ToastStyle) -> Void)?
     var isStartingProxy = false
     var captureSessionLoadTask: Task<Void, Never>?
@@ -127,6 +127,7 @@ final class ProxyViewModel: ObservableObject {
 
     deinit {
         networkPathMonitor?.cancel()
+        proxyNetworkRefreshTask?.cancel()
         if let wakeObserver {
             NSWorkspace.shared.notificationCenter.removeObserver(wakeObserver)
         }
