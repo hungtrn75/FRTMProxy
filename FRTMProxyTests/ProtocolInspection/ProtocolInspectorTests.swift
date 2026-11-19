@@ -1,9 +1,41 @@
+import AppKit
 import Foundation
 import Testing
 @testable import FRTMProxy
 
 @Suite("ProtocolInspector")
 struct ProtocolInspectorTests {
+    @Test("Copying expanded and collapsed JSON uses the original text") @MainActor
+    func copyJSONSelection() throws {
+        let source = #"{"items":[{"name":"😀"}]}"#
+        let view = NativeJSONTextView(usingTextLayoutManager: true)
+        let coordinator = NativeJSONBodyView.Coordinator()
+        coordinator.update(view: view, text: source, ranges: JSONFoldRange.find(in: source), color: .textColor, accent: .controlAccentColor)
+        view.setSelectedRange(NSRange(location: 0, length: view.string.utf16.count))
+        #expect(view.selectedOriginalText() == source)
+        let arrayStart = (source as NSString).range(of: "[").location
+        let arrayURL = try #require(URL(string: "frtm-json-fold://\(arrayStart)"))
+        #expect(coordinator.textView(view, clickedOnLink: arrayURL, at: 0))
+        let collapsedArray = (view.string as NSString).range(of: "[…]")
+        #expect(collapsedArray.location != NSNotFound)
+        view.setSelectedRange(collapsedArray)
+        #expect(view.selectedOriginalText() == #"[{"name":"😀"}]"#)
+        let url = try #require(URL(string: "frtm-json-fold://0"))
+        #expect(coordinator.textView(view, clickedOnLink: url, at: 0))
+        view.setSelectedRange(NSRange(location: 0, length: view.string.utf16.count))
+        #expect(view.selectedOriginalText() == source)
+    }
+
+    @Test("JSON folding ignores braces in strings and uses UTF-16 offsets")
+    func jsonFoldRanges() {
+        let source = #"{"emoji":"😀","text":"\\\" } [","items":[{"n":1},[]]}"#
+        let ranges = JSONFoldRange.find(in: source)
+        let text = source as NSString
+        #expect(ranges.count == 3)
+        #expect(ranges.map { text.substring(with: NSRange(location: $0.start, length: 1)) } == ["{", "[", "{"])
+        #expect(ranges.map { text.substring(with: NSRange(location: $0.end, length: 1)) } == ["}", "]", "}"])
+    }
+
     @Test("Body preparation runs off the UI actor and preserves large JSON content")
     func backgroundBodyPreparation() async throws {
         let objects = (0..<2000).map { ["index": $0, "value": $0 * 2] }
@@ -13,6 +45,7 @@ struct ProtocolInspectorTests {
             BodyRenderCache(source: source, headers: ["Content-Type": "application/json"])
         }.value
         #expect(prepared.inspection?.kind == .json)
+        #expect(prepared.isJSON)
         #expect(prepared.prettyPrinted != nil)
         let first = prepared.pretty()
         #expect(prepared.pretty() == first)
@@ -26,6 +59,9 @@ struct ProtocolInspectorTests {
         let source = "data: hello\n\n"
         let text = BodyRenderCache(source: source, headers: ["Content-Type": "text/plain"])
         let events = BodyRenderCache(source: source, headers: ["Content-Type": "text/event-stream"])
+        #expect(!text.isJSON)
+        #expect(!BodyRenderCache(source: "{invalid}").isJSON)
+        #expect(BodyRenderCache(source: #"{"query":"{ users { id } }"}"#).isJSON)
         #expect(text.inspection?.kind == .text)
         #expect(events.inspection?.kind == .serverSentEvents)
         #expect(events.inspection?.sections.first?.content.contains("hello") == true)

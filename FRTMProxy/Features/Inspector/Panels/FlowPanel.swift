@@ -322,6 +322,7 @@ private struct BodyInspector: View {
 
     @State private var mode: BodyMode = .pretty
     @State private var renderedText: String = ""
+    @State private var jsonFoldRanges: [JSONFoldRange] = []
     @State private var renderedImage: NSImage?
     @State private var cache = BodyRenderCache(source: nil)
 
@@ -377,12 +378,16 @@ private struct BodyInspector: View {
                     .foregroundStyle(colors.textSecondary)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
             } else {
-                Group {
+                ZStack(alignment: .topLeading) {
                     if mode == .image, let renderedImage {
                         Image(nsImage: renderedImage)
                             .resizable()
                             .scaledToFit()
                             .frame(maxWidth: .infinity, minHeight: imagePreviewHeight, maxHeight: imagePreviewHeight, alignment: .center)
+                            .padding(DesignSystem.Spacing.sm)
+                    } else if mode == .pretty && cache.isJSON {
+                        NativeJSONBodyView(text: renderedText, ranges: jsonFoldRanges, colors: colors)
+                            .frame(minHeight: 0, maxHeight: .infinity, alignment: .top)
                             .padding(DesignSystem.Spacing.sm)
                     } else {
                         NativeBodyTextView(text: renderedText, colors: colors)
@@ -414,7 +419,8 @@ private struct BodyInspector: View {
 
     @MainActor
     private func refreshIfNeeded() async {
-        isRendering = true
+        let normalizedSource = (payload ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        isRendering = cache.source != normalizedSource || cache.headers != headers
         defer { if !Task.isCancelled { isRendering = false } }
         let source = payload
         let sourceHeaders = headers
@@ -447,7 +453,7 @@ private struct BodyInspector: View {
         if renderedImage != nil, effectiveMode == .pretty { effectiveMode = .image }
         if renderedImage == nil, effectiveMode == .image { effectiveMode = .pretty }
         if !availableModes.contains(effectiveMode) { effectiveMode = .pretty }
-        if effectiveMode == .pretty {
+        if effectiveMode == .pretty && !prepared.isJSON {
             if isGraphQL { effectiveMode = .graphql }
             else if isGRPC { effectiveMode = .grpc }
             else if hasDedicatedStructuredInspection { effectiveMode = .structured }
@@ -455,7 +461,7 @@ private struct BodyInspector: View {
         let selectedMode = effectiveMode
         let contentTypeHint = contentType
         let formatting = Task.detached(priority: .userInitiated) {
-            guard !Task.isCancelled else { return (prepared, "") }
+            guard !Task.isCancelled else { return (prepared, "", [JSONFoldRange]()) }
             var result = prepared
             let text: String
             switch selectedMode {
@@ -471,9 +477,10 @@ private struct BodyInspector: View {
                 blocks.append(contentsOf: inspection?.sections.map { "## \($0.title)\n\($0.content)" } ?? [])
                 text = blocks.joined(separator: "\n\n")
             }
-            return (result, text)
+            let ranges = selectedMode == .pretty && result.isJSON ? JSONFoldRange.find(in: text) : []
+            return (result, text, ranges)
         }
-        let (result, text) = await withTaskCancellationHandler {
+        let (result, text, ranges) = await withTaskCancellationHandler {
             await formatting.value
         } onCancel: {
             formatting.cancel()
@@ -481,6 +488,7 @@ private struct BodyInspector: View {
         guard !Task.isCancelled else { return }
         cache = result
         renderedText = text
+        jsonFoldRanges = ranges
         if mode != effectiveMode { mode = effectiveMode }
     }
 
@@ -522,6 +530,7 @@ struct BodyRenderCache: Sendable {
     let headers: [String: String]
     let inspection: ProtocolInspectionResult?
     let imageData: Data?
+    let isJSON: Bool
     private(set) var prettyPrinted: String?
     private(set) var hexDump: String?
     private(set) var graphqlText: String?
@@ -530,6 +539,11 @@ struct BodyRenderCache: Sendable {
     init(source: String?, headers: [String: String] = [:]) {
         self.source = source
         self.headers = headers
+        if let source, source.hasPrefix("{") || source.hasPrefix("[") {
+            isJSON = (try? JSONSerialization.jsonObject(with: Data(source.utf8))) != nil
+        } else {
+            isJSON = false
+        }
         inspection = source == nil && headers.isEmpty ? nil : ProtocolInspector.inspect(body: source, headers: headers)
         let contentType = headers.first { $0.key.caseInsensitiveCompare("content-type") == .orderedSame }?.value ?? ""
         imageData = BodyImageDecoder.decodeData(from: source, contentType: contentType)

@@ -300,3 +300,148 @@ struct NativeBodyTextView: NSViewRepresentable {
 }
 
 final class NativeBodyTextContentView: NSTextView {}
+
+struct JSONFoldRange: Equatable, Sendable {
+    let start: Int
+    let end: Int
+
+    static func find(in text: String) -> [JSONFoldRange] {
+        var stack: [Int] = []
+        var ranges: [JSONFoldRange] = []
+        var inString = false
+        var escaped = false
+        for (offset, character) in text.utf16.enumerated() {
+            if Task.isCancelled { return [] }
+            if inString {
+                if escaped { escaped = false }
+                else if character == 92 { escaped = true }
+                else if character == 34 { inString = false }
+            } else if character == 34 {
+                inString = true
+            } else if character == 123 || character == 91 {
+                stack.append(offset)
+            } else if character == 125 || character == 93, let start = stack.popLast() {
+                if offset > start + 1 { ranges.append(JSONFoldRange(start: start, end: offset)) }
+            }
+        }
+        return ranges.sorted { $0.start < $1.start }
+    }
+}
+
+final class NativeJSONTextView: NSTextView {
+    var originalText = ""
+    var sourceOffsets: [Int] = []
+
+    override func copy(_ sender: Any?) {
+        guard let copied = selectedOriginalText() else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(copied, forType: .string)
+    }
+
+    func selectedOriginalText() -> String? {
+        let selection = selectedRange()
+        guard selection.length > 0, selection.location != NSNotFound,
+              NSMaxRange(selection) < sourceOffsets.count else { return nil }
+        let start = sourceOffsets[selection.location]
+        let end = sourceOffsets[NSMaxRange(selection)]
+        guard end > start else { return nil }
+        return (originalText as NSString).substring(with: NSRange(location: start, length: end - start))
+    }
+}
+
+struct NativeJSONBodyView: NSViewRepresentable {
+    let text: String
+    let ranges: [JSONFoldRange]
+    let colors: DesignSystem.ColorPalette
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
+    func makeNSView(context: Context) -> NSScrollView {
+        let scroll = NSScrollView()
+        scroll.hasVerticalScroller = true
+        scroll.autohidesScrollers = true
+        scroll.drawsBackground = false
+        let view = NativeJSONTextView(usingTextLayoutManager: true)
+        view.isEditable = false
+        view.isSelectable = true
+        view.isRichText = true
+        view.usesFindBar = true
+        view.isVerticallyResizable = true
+        view.isHorizontallyResizable = false
+        view.autoresizingMask = [.width]
+        view.textContainer?.widthTracksTextView = true
+        view.drawsBackground = false
+        view.delegate = context.coordinator
+        scroll.documentView = view
+        return scroll
+    }
+
+    func updateNSView(_ scroll: NSScrollView, context: Context) {
+        guard let view = scroll.documentView as? NativeJSONTextView else { return }
+        context.coordinator.update(view: view, text: text, ranges: ranges, color: NSColor(colors.textPrimary), accent: NSColor(colors.accent))
+    }
+
+    final class Coordinator: NSObject, NSTextViewDelegate {
+        private var source = ""
+        private var ranges: [JSONFoldRange] = []
+        private var folded: Set<Int> = []
+        private var color = NSColor.textColor
+        private var accent = NSColor.controlAccentColor
+
+        func update(view: NativeJSONTextView, text: String, ranges: [JSONFoldRange], color: NSColor, accent: NSColor) {
+            let sourceChanged = source != text
+            guard sourceChanged || self.ranges != ranges || self.color != color || self.accent != accent else { return }
+            if sourceChanged { folded.removeAll() }
+            source = text
+            self.ranges = ranges
+            self.color = color
+            self.accent = accent
+            render(view)
+            if sourceChanged { view.scrollToBeginningOfDocument(nil) }
+        }
+
+        func textView(_ textView: NSTextView, clickedOnLink link: Any, at charIndex: Int) -> Bool {
+            guard let textView = textView as? NativeJSONTextView,
+                  let url = link as? URL, url.scheme == "frtm-json-fold", let start = Int(url.host ?? "") else { return false }
+            if folded.contains(start) { folded.remove(start) } else { folded.insert(start) }
+            render(textView)
+            textView.scrollRangeToVisible(NSRange(location: min(charIndex, textView.string.utf16.count), length: 0))
+            return true
+        }
+
+        private func render(_ view: NativeJSONTextView) {
+            let font = NSFont.monospacedSystemFont(ofSize: DesignSystem.Metrics.font(13), weight: .regular)
+            let attributes: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: color]
+            let output = NSMutableAttributedString(string: "")
+            let original = source as NSString
+            var cursor = 0
+            var offsets = [0]
+            func appendSource(from start: Int, to end: Int) {
+                guard end > start else { return }
+                output.append(NSAttributedString(string: original.substring(with: NSRange(location: start, length: end - start)), attributes: attributes))
+                offsets.append(contentsOf: (start + 1)...end)
+            }
+            for range in ranges {
+                guard range.start >= cursor, range.end < original.length else { continue }
+                appendSource(from: cursor, to: range.start)
+                if let url = URL(string: "frtm-json-fold://\(range.start)") {
+                    output.append(NSAttributedString(string: folded.contains(range.start) ? "▸" : "▾", attributes: [.font: font, .foregroundColor: accent, .link: url]))
+                    offsets.append(range.start)
+                }
+                if folded.contains(range.start) {
+                    appendSource(from: range.start, to: range.start + 1)
+                    output.append(NSAttributedString(string: "…", attributes: attributes))
+                    offsets.append(range.end)
+                    cursor = range.end
+                } else {
+                    cursor = range.start
+                }
+            }
+            appendSource(from: cursor, to: original.length)
+            view.originalText = source
+            view.sourceOffsets = offsets
+            view.linkTextAttributes = [.foregroundColor: accent, .underlineStyle: 0]
+            view.textStorage?.setAttributedString(output)
+        }
+    }
+}
