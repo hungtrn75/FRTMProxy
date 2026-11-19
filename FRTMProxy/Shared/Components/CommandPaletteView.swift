@@ -5,7 +5,8 @@ struct CommandPaletteAction: Identifiable, Equatable {
         lhs.id == rhs.id
     }
     
-    let id = UUID()
+    // Titles are unique, stable localization keys for the commands in the palette.
+    var id: String { title }
     let title: String
     let subtitle: String?
     let systemImage: String?

@@ -167,6 +167,8 @@ struct InspectorScreen: View {
         .frame(minWidth: DesignSystem.Metrics.scaled(1060), minHeight: DesignSystem.Metrics.scaled(900))
         .background(colors.background)
         .task {
+            syncPinnedHostFilterState()
+            syncPinnedAppFilterState()
             updateFilteredFlows()
         }
         .onChange(of: viewModel.flows) { _, _ in
@@ -183,6 +185,8 @@ struct InspectorScreen: View {
         }
         .onChange(of: profileStore.activeProfileID) { _, _ in
             filter = FlowFilter()
+            syncPinnedHostFilterState()
+            syncPinnedAppFilterState()
             updateFilteredFlows()
         }
         .onChange(of: profileStore.profiles) { _, _ in updateFilteredFlows() }
